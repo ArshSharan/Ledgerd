@@ -1,0 +1,84 @@
+# Ledgerd — TODO
+
+Tracks build progress phase by phase. Check off items as they land.
+
+---
+
+## Phase 0 — Setup ✅
+- [x] `go mod init`, repo scaffolding per TRD §3 package layout
+- [x] Postgres running via `docker-compose` with healthcheck
+- [x] `golang-migrate` wired up, first migration: `payment_intents`, `idempotency_keys`, `ledger_entries`
+- [x] Skeleton `chi` router with `/healthz` endpoint
+- [x] Dockerfile + docker-compose for full stack
+- [x] Scrubbed company-specific references from all planning docs
+
+## Phase 1 — Idempotency layer ✅
+- [x] `POST /v1/payment_intents` handler with `Idempotency-Key` header enforcement
+- [x] Idempotency check: lookup `(merchant_id, key)` → replay cached response or 409 on hash mismatch
+- [x] On miss: insert payment intent + idempotency row in a single transaction
+- [x] Concurrent race handled: unique-violation on insert → catch + re-lookup winner's response
+- [x] `GET /v1/payment_intents/:id`
+- [x] Unit tests: hash determinism, conflict detection (table-driven)
+- [x] Integration test: 10 concurrent requests, same key → exactly 1 DB row, 10 identical responses
+- [x] Integration test: same key + different body → 409
+- [x] All tests pass under `go test -race`
+
+## Phase 2 — Ledger engine 🔲
+- [ ] `POST /v1/payment_intents/:id/confirm` handler
+- [ ] State machine: `requires_confirmation → succeeded | failed`
+- [ ] Ledger write: `SELECT ... FOR UPDATE` on account row, insert debit + credit atomically
+- [ ] Balance derivation query (`SUM` over ledger rows — never a stored mutable field)
+- [ ] Unit tests: valid/invalid state transitions
+- [ ] **The headline test:** 50+ goroutines confirming the same intent concurrently under `go test -race` → exactly one successful confirm, no duplicate ledger entries
+
+## Phase 3 — Webhooks 🔲
+- [ ] `webhook_endpoints` + `webhook_delivery_attempts` migration
+- [ ] Event enqueue on payment success/failure
+- [ ] Delivery worker: poll due jobs, POST with HMAC-SHA256 signature header, exponential backoff
+- [ ] Local stub receiver binary (configurable to fail N times then succeed)
+- [ ] Integration test: stub fails 3× then succeeds, assert backoff timing + eventual `succeeded`, no duplicate delivery
+
+## Phase 4 — Dashboard 🔲
+- [ ] Read-only `/v1/internal/*` endpoints (payments list, ledger for account, webhook delivery log)
+- [ ] Payments screen: table with ID, customer, amount, status, idempotency cache-hit indicator
+- [ ] Ledger screen: live-updating balance (poll 1–2s), debit/credit feed
+- [ ] Webhooks screen: delivery attempts with retry status
+- [ ] Token system applied: colors, Inter + monospace, status-dot pattern (no pill badges)
+
+## Phase 5 — Polish & CI 🔲
+- [ ] `golangci-lint` clean, `go vet` clean
+- [ ] GitHub Actions: lint + `go test -race -cover` on every push
+- [ ] Test coverage ≥ 80% on `ledger`, `idempotency`, `webhook` packages
+- [ ] README: quickstart, architecture diagram, trade-offs section
+- [ ] Seed script: one merchant, one webhook endpoint, one stub receiver
+
+## Environment setup (one-time)
+- [x] Install MSYS2 + mingw-w64-x86_64-gcc for `go test -race` on Windows
+  - Path to add: `C:\msys64\mingw64\bin`
+- [ ] Add `C:\msys64\mingw64\bin` permanently to system PATH so `-race` works in any terminal
+
+---
+
+## Quick reference
+
+```powershell
+# Start Postgres
+docker compose up -d postgres
+
+# Run server
+$env:DATABASE_URL="postgres://ledgerd:ledgerd@localhost:5432/ledgerd?sslmode=disable"
+$env:API_KEY="test-api-key"; $env:MIGRATIONS_DIR="migrations"
+go run ./cmd/server
+
+# Run all tests with race detector
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+$env:DATABASE_URL="postgres://ledgerd:ledgerd@localhost:5432/ledgerd?sslmode=disable"
+go test -race -v ./...
+
+# Smoke test (use curl.exe to bypass PowerShell alias)
+curl.exe -X POST http://localhost:8080/v1/payment_intents `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: key-abc" `
+  -H "X-Merchant-ID: 00000000-0000-0000-0000-000000000001" `
+  -d "{\"amount\":1000,\"currency\":\"usd\",\"customer_id\":\"00000000-0000-0000-0000-000000000002\"}"
+```
