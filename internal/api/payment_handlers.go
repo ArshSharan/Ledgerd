@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/arshsharan/ledgerd/internal/idempotency"
+	"github.com/arshsharan/ledgerd/internal/ledger"
 	"github.com/arshsharan/ledgerd/internal/payment"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -89,6 +90,7 @@ func (h *paymentHandlers) createPaymentIntent(w http.ResponseWriter, r *http.Req
 	// --- Miss: parse body and create ---
 	var req createPaymentIntentRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		h.logger.Error("JSON unmarshal failed", "error", err, "body_len", len(bodyBytes))
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -186,7 +188,80 @@ func (h *paymentHandlers) getPaymentIntent(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, intentToResponse(intent))
 }
 
-// --- Request / Response types ---
+// confirmPaymentIntent handles POST /v1/payment_intents/:id/confirm.
+//
+// Transitions the payment intent from requires_confirmation to succeeded (or
+// failed if simulate_failure=true in the request body). Uses SELECT ... FOR
+// UPDATE inside the transaction so concurrent confirms are serialised at the
+// DB level — only the first commit wins; all others see a non-confirmable
+// status and receive 409. (TRD §4.2)
+func (h *paymentHandlers) confirmPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payment intent ID")
+		return
+	}
+
+	// Optional body: {"simulate_failure": true}
+	var req confirmPaymentIntentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.logger.Error("begin tx failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	intent, err := payment.Confirm(r.Context(), tx, id, !req.SimulateFailure)
+	if errors.Is(err, payment.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "payment intent not found")
+		return
+	}
+	if errors.Is(err, payment.ErrAlreadyProcessed) {
+		writeError(w, http.StatusConflict, "payment intent already processed")
+		return
+	}
+	if err != nil {
+		h.logger.Error("payment.Confirm failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Post ledger entries only when the intent succeeded.
+	if intent.Status == payment.StatusSucceeded {
+		if err := ledger.PostEntries(r.Context(), tx, ledger.PostParams{
+			PaymentIntentID: intent.ID,
+			DebitAccountID:  intent.CustomerID,
+			CreditAccountID: intent.MerchantID,
+			Amount:          intent.Amount,
+		}); err != nil {
+			h.logger.Error("ledger.PostEntries failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		h.logger.Error("commit failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, intentToResponse(intent))
+}
+
+// --- Request types ---
+
+type confirmPaymentIntentRequest struct {
+	SimulateFailure bool `json:"simulate_failure"`
+}
+
 
 type createPaymentIntentRequest struct {
 	Amount     int64  `json:"amount"`

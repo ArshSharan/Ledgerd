@@ -28,21 +28,28 @@ func dbURL(t *testing.T) string {
 	return dsn
 }
 
-// openTestDB opens a real DB, runs migrations, and registers a cleanup that
+// openTestDB opens a real DB, runs migrations, and registers cleanup that
 // truncates all tables so tests don't bleed into each other.
+// Tables are also truncated BEFORE the test starts so stale data from a
+// previously crashed run doesn't cause false failures.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := dbURL(t)
 
-	// Migrations are at ../../migrations relative to this test file.
 	migrationsDir := "../../migrations"
 
 	db, err := store.Open(dsn, migrationsDir)
 	require.NoError(t, err)
 
-	t.Cleanup(func() {
+	truncate := func() {
 		db.ExecContext(context.Background(), //nolint:errcheck
 			`TRUNCATE payment_intents, idempotency_keys, ledger_entries RESTART IDENTITY CASCADE`)
+	}
+
+	truncate() // clean up before the test
+
+	t.Cleanup(func() {
+		truncate() // clean up after the test
 		db.Close()
 	})
 	return db

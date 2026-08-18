@@ -23,13 +23,16 @@ Tracks build progress phase by phase. Check off items as they land.
 - [x] Integration test: same key + different body → 409
 - [x] All tests pass under `go test -race`
 
-## Phase 2 — Ledger engine 🔲
-- [ ] `POST /v1/payment_intents/:id/confirm` handler
-- [ ] State machine: `requires_confirmation → succeeded | failed`
-- [ ] Ledger write: `SELECT ... FOR UPDATE` on account row, insert debit + credit atomically
-- [ ] Balance derivation query (`SUM` over ledger rows — never a stored mutable field)
-- [ ] Unit tests: valid/invalid state transitions
-- [ ] **The headline test:** 50+ goroutines confirming the same intent concurrently under `go test -race` → exactly one successful confirm, no duplicate ledger entries
+## Phase 2 — Ledger engine ✅
+- [x] `POST /v1/payment_intents/:id/confirm` handler
+- [x] State machine: `requires_confirmation → succeeded | failed`
+- [x] `SELECT ... FOR UPDATE` on payment row prevents concurrent double-confirms
+- [x] Ledger write: debit + credit posted atomically in the same transaction
+- [x] Balance derivation query (`SUM` over ledger rows — never a stored mutable field)
+- [x] Unit tests: `CanConfirm` table-driven (5 cases), sentinel error distinctness, status constants
+- [x] **Headline test:** 50 goroutines confirming same intent concurrently → exactly 1 HTTP 200, exactly 2 ledger rows, 0 data races under `go test -race`
+- [x] `simulate_failure` field: intent → `failed`, no ledger entries posted
+- [x] Balance test: customer debited, merchant credited, correct net balances
 
 ## Phase 3 — Webhooks 🔲
 - [ ] `webhook_endpoints` + `webhook_delivery_attempts` migration
@@ -75,10 +78,11 @@ $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
 $env:DATABASE_URL="postgres://ledgerd:ledgerd@localhost:5432/ledgerd?sslmode=disable"
 go test -race -v ./...
 
-# Smoke test (use curl.exe to bypass PowerShell alias)
-curl.exe -X POST http://localhost:8080/v1/payment_intents `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: key-abc" `
-  -H "X-Merchant-ID: 00000000-0000-0000-0000-000000000001" `
-  -d "{\"amount\":1000,\"currency\":\"usd\",\"customer_id\":\"00000000-0000-0000-0000-000000000002\"}"
+# Smoke test — curl.exe needs --data-raw so {braces} aren't treated as glob patterns
+$body = '{"amount":1000,"currency":"usd","customer_id":"00000000-0000-0000-0000-000000000002"}'
+curl.exe -X POST http://localhost:8080/v1/payment_intents -H "Content-Type: application/json" -H "Idempotency-Key: key-abc" -H "X-Merchant-ID: 00000000-0000-0000-0000-000000000001" --data-raw $body
+
+# Or use PowerShell native (cleaner, no curl escaping issues)
+$headers = @{"Idempotency-Key"="key-abc"; "X-Merchant-ID"="00000000-0000-0000-0000-000000000001"}
+Invoke-RestMethod -Method POST -Uri http://localhost:8080/v1/payment_intents -Headers $headers -ContentType "application/json" -Body $body
 ```

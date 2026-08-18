@@ -26,6 +26,10 @@ var ErrNotFound = errors.New("payment intent not found")
 // ErrInvalidTransition is returned when a state change is not allowed.
 var ErrInvalidTransition = errors.New("invalid payment intent state transition")
 
+// ErrAlreadyProcessed is returned by Confirm when the intent is not in
+// requires_confirmation — i.e. it was already confirmed or failed.
+var ErrAlreadyProcessed = errors.New("payment intent already processed")
+
 // Intent is the in-memory representation of a payment_intents row.
 type Intent struct {
 	ID         uuid.UUID
@@ -85,6 +89,54 @@ func (s *Store) GetByID(ctx context.Context, id uuid.UUID) (*Intent, error) {
 		return nil, ErrNotFound
 	}
 	return intent, err
+}
+
+// CanConfirm reports whether an intent in the given status can be confirmed.
+// Exposed so callers can unit-test transition logic without a real DB.
+func CanConfirm(status string) bool {
+	return status == StatusRequiresConfirmation
+}
+
+// Confirm transitions a payment intent to succeeded (or failed if succeed=false).
+// Must be called inside a transaction. Uses SELECT ... FOR UPDATE to hold a
+// row lock on the payment_intents row, preventing concurrent double-confirms
+// from both reading requires_confirmation and both posting ledger entries.
+// (TRD §4.2)
+func Confirm(ctx context.Context, tx *sql.Tx, id uuid.UUID, succeed bool) (*Intent, error) {
+	const selectQ = `
+		SELECT id, merchant_id, customer_id, amount, currency, status, created_at
+		FROM   payment_intents
+		WHERE  id = $1
+		FOR UPDATE`
+
+	intent, err := scanIntent(tx.QueryRowContext(ctx, selectQ, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	if !CanConfirm(intent.Status) {
+		return nil, ErrAlreadyProcessed
+	}
+
+	newStatus := StatusSucceeded
+	if !succeed {
+		newStatus = StatusFailed
+	}
+
+	const updateQ = `
+		UPDATE payment_intents
+		SET    status = $2
+		WHERE  id = $1
+		RETURNING id, merchant_id, customer_id, amount, currency, status, created_at`
+
+	updated, err := scanIntent(tx.QueryRowContext(ctx, updateQ, id, newStatus))
+	if err != nil {
+		return nil, fmt.Errorf("payment.Confirm update: %w", err)
+	}
+	return updated, nil
 }
 
 // scanIntent reads a *sql.Row into an Intent.

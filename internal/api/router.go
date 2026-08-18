@@ -34,6 +34,7 @@ func Router(db *sql.DB, apiKey string, logger *slog.Logger) http.Handler {
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/payment_intents", ph.createPaymentIntent)
 		r.Get("/payment_intents/{id}", ph.getPaymentIntent)
+		r.Post("/payment_intents/{id}/confirm", ph.confirmPaymentIntent)
 	})
 
 	return r
