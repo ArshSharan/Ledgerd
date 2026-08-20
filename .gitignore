@@ -6,6 +6,9 @@
 *.test
 *.out
 
+# Node / Frontend
+web/node_modules/
+
 # Editor
 .vscode/
 .idea/

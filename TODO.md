@@ -45,12 +45,15 @@ Tracks build progress phase by phase. Check off items as they land.
 - [x] Transactional atomicity test: failed confirm leaves zero delivery attempt rows
 - [x] All tests pass under `go test -race`
 
-## Phase 4 — Dashboard 🔲
-- [ ] Read-only `/v1/internal/*` endpoints (payments list, ledger for account, webhook delivery log)
-- [ ] Payments screen: table with ID, customer, amount, status, idempotency cache-hit indicator
-- [ ] Ledger screen: live-updating balance (poll 1–2s), debit/credit feed
-- [ ] Webhooks screen: delivery attempts with retry status
-- [ ] Token system applied: colors, Inter + monospace, status-dot pattern (no pill badges)
+## Phase 4 — Dashboard ✅
+- [x] Read-only `/v1/internal/*` endpoints (payments list, accounts, ledger for account, webhook delivery log)
+- [x] CORS middleware on Go API server for local dev & proxying
+- [x] SPA static file server embedded in Go router (serves `web/dist`)
+- [x] Vite + React + TypeScript single-page application (`web/`)
+- [x] Payments screen: table with ID, customer, amount, status, expandable idempotency details
+- [x] Signature Ledger screen: live-updating balance (poll 1s), debit/credit feed with animated flash on new rows
+- [x] Webhooks screen: delivery attempts with retry countdowns and HTTP response codes
+- [x] Token system applied: `--surface`, `--ink`, `--accent` #635BFF, Inter + IBM Plex Mono typography, quiet status-dot pattern
 
 ## Phase 5 — Polish & CI 🔲
 - [ ] `golangci-lint` clean, `go vet` clean
