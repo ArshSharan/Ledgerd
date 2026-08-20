@@ -31,10 +31,13 @@ func Router(db *sql.DB, apiKey string, logger *slog.Logger) http.Handler {
 
 	// Payment intent routes
 	ph := newPaymentHandlers(db, logger)
+	wh := newWebhookHandlers(db, logger)
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/payment_intents", ph.createPaymentIntent)
 		r.Get("/payment_intents/{id}", ph.getPaymentIntent)
 		r.Post("/payment_intents/{id}/confirm", ph.confirmPaymentIntent)
+
+		r.Post("/webhook_endpoints", wh.registerWebhookEndpoint)
 	})
 
 	return r

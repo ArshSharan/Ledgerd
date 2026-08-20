@@ -34,12 +34,16 @@ Tracks build progress phase by phase. Check off items as they land.
 - [x] `simulate_failure` field: intent → `failed`, no ledger entries posted
 - [x] Balance test: customer debited, merchant credited, correct net balances
 
-## Phase 3 — Webhooks 🔲
-- [ ] `webhook_endpoints` + `webhook_delivery_attempts` migration
-- [ ] Event enqueue on payment success/failure
-- [ ] Delivery worker: poll due jobs, POST with HMAC-SHA256 signature header, exponential backoff
-- [ ] Local stub receiver binary (configurable to fail N times then succeed)
-- [ ] Integration test: stub fails 3× then succeeds, assert backoff timing + eventual `succeeded`, no duplicate delivery
+## Phase 3 — Webhooks ✅
+- [x] `webhook_endpoints` + `webhook_delivery_attempts` migration (0002)
+- [x] `POST /v1/webhook_endpoints` — register URL + secret per merchant
+- [x] `webhook.Enqueue` — inserts delivery attempt inside the confirm tx (atomic: rollback = no orphan rows)
+- [x] Delivery worker — `SELECT FOR UPDATE SKIP LOCKED`, exponential backoff (base×2^n), 5-attempt cap
+- [x] HMAC-SHA256 signing — `X-Webhook-Signature: sha256=<hex>` on every delivery
+- [x] `cmd/stubwebhook` — configurable fail-N-then-succeed receiver for manual demos
+- [x] **Headline test:** stub fails 3×, succeeds on 4th → `attempt_count=4`, `status=succeeded`, no extras after cancellation
+- [x] Transactional atomicity test: failed confirm leaves zero delivery attempt rows
+- [x] All tests pass under `go test -race`
 
 ## Phase 4 — Dashboard 🔲
 - [ ] Read-only `/v1/internal/*` endpoints (payments list, ledger for account, webhook delivery log)

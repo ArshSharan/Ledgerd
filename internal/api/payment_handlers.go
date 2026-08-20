@@ -14,6 +14,7 @@ import (
 	"github.com/arshsharan/ledgerd/internal/idempotency"
 	"github.com/arshsharan/ledgerd/internal/ledger"
 	"github.com/arshsharan/ledgerd/internal/payment"
+	"github.com/arshsharan/ledgerd/internal/webhook"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -245,6 +246,14 @@ func (h *paymentHandlers) confirmPaymentIntent(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+	}
+
+	// Enqueue webhook delivery for both success and failure (TRD §4.3).
+	// Runs inside the same tx so if this fails the whole confirm rolls back.
+	if err := webhook.Enqueue(r.Context(), tx, intent); err != nil {
+		h.logger.Error("webhook.Enqueue failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 
 	if err := tx.Commit(); err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/arshsharan/ledgerd/internal/api"
 	"github.com/arshsharan/ledgerd/internal/config"
 	"github.com/arshsharan/ledgerd/internal/store"
+	"github.com/arshsharan/ledgerd/internal/webhook"
 )
 
 func main() {
@@ -46,6 +47,15 @@ func run(logger *slog.Logger) error {
 		"migrations_dir", cfg.MigrationsDir)
 
 	router := api.Router(db, cfg.APIKey, logger)
+
+	// Cancellable context for background goroutines (worker etc.).
+	// Cancelled when we receive a shutdown signal so they stop cleanly.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	// Webhook delivery worker — polls every 2s, exponential backoff base 30s.
+	worker := webhook.NewWorker(db, logger, 30*time.Second, 2*time.Second)
+	go worker.Run(workerCtx)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
